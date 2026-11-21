@@ -578,34 +578,18 @@
   }
 
   function renderAdmin() {
-    main.innerHTML = `${pageTitle("RESTRICTED / CONTENT MANAGEMENT", "Publisher desk", "Administrator access is verified with GitHub. Published changes are committed directly to this website's repository.")}
-      <section class="section shell admin-shell"><div id="admin-login-status" class="admin-status"><p>Sign in with an approved GitHub account to publish and manage website content.</p>
-        <button class="button button-primary" id="admin-login" type="button">Sign in with GitHub</button>
-        <p class="data-timestamp">Access requires an allowlisted GitHub username and write access to the website repository. No token is stored in this browser.</p></div>
-        <div id="admin-workspace" hidden></div></section>`;
-    document.querySelector("#admin-login").addEventListener("click", async () => {
-      const button = document.querySelector("#admin-login");
-      button.disabled = true;
-      try {
-        await authorizeAdmin();
-        renderAdminWorkspace();
-      } catch (error) {
-        adminToken = "";
-        adminLogin = "";
-        document.querySelector("#admin-login-status").innerHTML = `<div class="unavailable"><strong>Sign-in unavailable</strong><p>${esc(error.message)}</p><button class="button button-outline" id="admin-retry" type="button">Try again</button></div>`;
-        document.querySelector("#admin-retry").addEventListener("click", renderAdmin);
-      }
-    });
+    main.innerHTML = `${pageTitle("LOCAL CONTENT TOOL", "Publisher desk", "Create and manage website content without an account. Download the generated JSON file, then replace data/content.json in the repository.")}
+      <section class="section shell admin-shell"><div id="admin-login-status" class="admin-status">
+        <span class="status-pill status-clear"><span class="status-dot"></span>Local publisher</span>
+        <p>Changes are made in this browser only until you download and deploy the updated content JSON.</p>
+        <button class="button button-primary" id="download-content" type="button">Download content.json</button>
+        <p class="data-timestamp">This direct page is not linked from the main navigation. No GitHub credentials or OAuth login are used.</p>
+      </div><div id="admin-workspace"></div></section>`;
+    renderAdminWorkspace();
+    document.querySelector("#download-content").addEventListener("click", downloadContentJson);
   }
 
   function renderAdminWorkspace() {
-    const status = document.querySelector("#admin-login-status");
-    status.innerHTML = `<span class="status-pill status-clear"><span class="status-dot"></span>Signed in as @${esc(adminLogin)}</span><button class="button button-outline admin-signout" id="admin-signout" type="button">Sign out</button><p class="data-timestamp">Publishing commits changes to ${esc(config.githubOwner)}/${esc(config.githubRepository)} (${esc(config.githubBranch || "main")}).</p>`;
-    document.querySelector("#admin-signout").addEventListener("click", () => {
-      adminToken = "";
-      adminLogin = "";
-      renderAdmin();
-    });
     const workspace = document.querySelector("#admin-workspace");
     workspace.hidden = false;
     workspace.innerHTML = `<div id="admin-feedback" aria-live="polite"></div>
@@ -722,6 +706,18 @@
     });
   }
 
+  function downloadContentJson() {
+    const blob = new Blob([`${JSON.stringify(content, null, 2)}\n`], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "content.json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  }
+
   function encodeBase64(bytes) {
     let binary = "";
     for (let start = 0; start < bytes.length; start += 0x8000) {
@@ -732,27 +728,21 @@
 
   async function publishContent(applyChange, message) {
     const feedback = document.querySelector("#admin-feedback");
-    feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Publishing content to GitHub…</div>`;
+    feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Updating local content…</div>`;
     try {
-      const path = "data/content.json";
-      const current = await githubApi(`/repos/${encodeURIComponent(config.githubOwner)}/${encodeURIComponent(config.githubRepository)}/contents/${path}?ref=${encodeURIComponent(config.githubBranch || "main")}`);
-      const bytes = Uint8Array.from(atob(current.content.replace(/\s/g, "")), (char) => char.charCodeAt(0));
-      const latest = JSON.parse(new TextDecoder().decode(bytes));
-      const normalized = { ...structuredClone(EMPTY_CONTENT), ...latest };
+      const normalized = structuredClone(content);
       for (const key of Object.keys(EMPTY_CONTENT)) if (!Array.isArray(normalized[key])) normalized[key] = [];
       const merged = applyChange(normalized);
-      const encoded = encodeBase64(new TextEncoder().encode(`${JSON.stringify(merged, null, 2)}\n`));
-      await saveRepoFile(path, encoded, message, current.sha);
       content = merged;
-      feedback.innerHTML = `<div class="success-message">Published successfully. Your update is committed to the website repository and will appear after the site redeploys.</div>`;
+      feedback.innerHTML = `<div class="success-message">Updated locally. Download content.json and replace the repository file to publish.</div>`;
       const editor = document.querySelector("#admin-panel form");
       if (editor?.dataset.editKey) renderAdminForm(editor.dataset.kind);
       else editor?.reset();
       renderAdminList();
       if (page === "home") renderHome();
     } catch (error) {
-      console.error("Publishing site content failed.", error);
-      feedback.innerHTML = `<div class="unavailable"><strong>Publish failed</strong><p>${esc(error.message)}. Your content has not been confirmed as published. Check repository permissions and try again.</p></div>`;
+      console.error("Updating local content failed.", error);
+      feedback.innerHTML = `<div class="unavailable"><strong>Update failed</strong><p>${esc(error.message)}</p></div>`;
     }
   }
 
@@ -788,13 +778,10 @@
       const image = data.get("graphic");
       delete item.graphic;
       if (image instanceof File && image.size) {
-        const safeName = image.name.replace(/[^a-zA-Z0-9._-]/g, "-").slice(-100) || "outlook-image";
-        const path = `content/uploads/${Date.now()}-${safeName}`;
         const feedback = document.querySelector("#admin-feedback");
         feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Uploading outlook image…</div>`;
         try {
-          await saveRepoFile(path, await fileToBase64(image), `Upload outlook graphic: ${safeName}`);
-          item.graphic = `./${path}`;
+          item.graphic = `data:${image.type};base64,${await fileToBase64(image)}`;
         } catch (error) {
           console.error("Outlook image upload failed.", error);
           feedback.innerHTML = `<div class="unavailable"><strong>Image upload failed</strong><p>${esc(error.message)}. The outlook was not published.</p></div>`;
