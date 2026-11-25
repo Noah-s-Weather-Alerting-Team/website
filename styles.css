@@ -367,6 +367,7 @@ p { color: var(--muted); }
 .footer-bottom span:first-child { max-width: 650px; }
 
 .admin-shell { max-width: 980px; padding-top: 25px; }
+.admin-page-actions { margin-bottom: 16px; }
 .admin-status { position: relative; margin-bottom: 25px; padding: 20px; border: 1px solid var(--line); border-radius: 5px; background: #0d2034; }
 .admin-status-editor, .admin-content-editor { margin-bottom: 28px; padding: 24px; border: 1px solid var(--line); border-radius: 5px; background: #0b1d30; }
 .admin-status-editor h2, .admin-content-editor h2 { margin-bottom: 7px; font-size: 20px; }

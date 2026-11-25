@@ -705,7 +705,7 @@
   }
 
   function renderAdmin() {
-    main.innerHTML = `${pageTitle("ADMINISTRATION", "Admin dashboard", "Sign in to publish the live Noah Storm Scan bot status and manage website content.")}<section class="section shell admin-shell"><div id="admin-login-status" class="admin-status" aria-live="polite"><div class="loading-state"><span class="loader"></span>Connecting to Firebase…</div></div><div id="admin-workspace" hidden></div></section>`;
+    main.innerHTML = `${pageTitle("ADMINISTRATION", "Admin dashboard", "Sign in to publish the live Noah Storm Scan bot status and manage website content.")}<section class="section shell admin-shell"><div class="admin-page-actions"><a class="button button-outline" href="./">Return to main page</a></div><div id="admin-login-status" class="admin-status" aria-live="polite"><div class="loading-state"><span class="loader"></span>Connecting to Firebase…</div></div><div id="admin-workspace" hidden></div></section>`;
     setupAdminAuthentication();
   }
 
