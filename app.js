@@ -28,6 +28,7 @@
   let adminToken = "";
   let adminLogin = "";
   let firebaseServicesPromise;
+  let pageHasRendered = false;
 
   const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -89,14 +90,17 @@
       firebaseServicesPromise = Promise.all([
         import("https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js"),
         import("https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js"),
-        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js")
-      ]).then(([appSdk, authSdk, firestoreSdk]) => {
+        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js"),
+        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-storage.js")
+      ]).then(([appSdk, authSdk, firestoreSdk, storageSdk]) => {
         const app = appSdk.initializeApp(config.firebase);
         return {
           auth: authSdk.getAuth(app),
           firestore: firestoreSdk.getFirestore(app),
+          storage: storageSdk.getStorage(app),
           authSdk,
-          firestoreSdk
+          firestoreSdk,
+          storageSdk
         };
       }).catch((error) => {
         firebaseServicesPromise = undefined;
@@ -142,15 +146,55 @@
       timestampElement.textContent = "";
     });
   }
+  function normalizeContent(loaded) {
+    const normalized = {};
+    for (const key of Object.keys(EMPTY_CONTENT)) {
+      normalized[key] = Array.isArray(loaded?.[key]) ? loaded[key] : [];
+    }
+    return normalized;
+  }
+  function refreshContentView() {
+    if (!pageHasRendered) return;
+    if (page === "admin") {
+      if (document.querySelector("#admin-content-list")) renderAdminList();
+      return;
+    }
+    const pages = {
+      home: renderHome,
+      alerts: renderAlertsPage,
+      outlooks: renderOutlooksPage,
+      media: renderMediaPage
+    };
+    pages[page]?.();
+  }
   const getContent = async () => {
     try {
       const loaded = await fetchJson("./data/content.json", { cache: "no-store" });
-      content = { ...structuredClone(EMPTY_CONTENT), ...loaded };
-      for (const key of Object.keys(EMPTY_CONTENT)) {
-        if (!Array.isArray(content[key])) content[key] = [];
-      }
+      content = normalizeContent(loaded);
     } catch (error) {
       console.error("Could not load published site content.", error);
+      contentLoadError = true;
+    }
+    try {
+      const { firestore, firestoreSdk } = await getFirebaseServices();
+      const contentRef = firestoreSdk.doc(firestore, "siteContent", "published");
+      const snapshot = await firestoreSdk.getDoc(contentRef);
+      if (snapshot.exists()) {
+        content = normalizeContent(snapshot.data());
+        contentLoadError = false;
+      }
+      firestoreSdk.onSnapshot(contentRef, (updatedSnapshot) => {
+        if (!updatedSnapshot.exists()) return;
+        content = normalizeContent(updatedSnapshot.data());
+        contentLoadError = false;
+        refreshContentView();
+      }, (error) => {
+        console.error("Could not listen for published website content.", error);
+        contentLoadError = true;
+        refreshContentView();
+      });
+    } catch (error) {
+      console.error("Could not load live website content from Firebase.", error);
       contentLoadError = true;
     }
   };
@@ -708,7 +752,7 @@
     const loginStatus = document.querySelector("#admin-login-status");
     loginStatus.innerHTML = `<span class="status-pill status-clear"><span class="status-dot"></span>Signed in as ${esc(user.email || "administrator")}</span>
       <button class="button button-outline admin-signout" id="admin-signout" type="button">Sign out</button>
-      <p>Bot status publishes immediately to the public site. Website content changes below remain local until downloaded and deployed.</p>`;
+      <p>Bot status and website content publish immediately to the public site.</p>`;
     document.querySelector("#admin-signout").addEventListener("click", () => {
       authSdk.signOut(auth).catch((error) => {
         console.error("Firebase admin sign-out failed.", error);
@@ -724,10 +768,8 @@
         <label>Status message (optional)<textarea name="message" rows="3" maxlength="500" placeholder="Add a short note for visitors"></textarea></label>
         <button class="button button-primary" type="submit">Publish status</button>
       </form><div id="bot-status-feedback" aria-live="polite"></div></section>
-      <section class="admin-content-editor"><h2>Website content</h2><p>These content edits are still downloaded as JSON and deployed with the website.</p>
-        <button class="button button-outline" id="download-content" type="button">Download content.json</button>
+      <section class="admin-content-editor"><h2>Website content</h2><p>Published changes appear on the public site without a separate download or deployment.</p>
         <div id="admin-content-workspace"></div></section>`;
-    workspace.querySelector("#download-content").addEventListener("click", downloadContentJson);
     renderAdminWorkspace(workspace.querySelector("#admin-content-workspace"));
     setupBotStatusEditor(workspace);
   }
@@ -836,7 +878,18 @@
       }
       form.querySelector('button[type="submit"]').textContent = "Save changes";
     }
-    form.addEventListener("submit", (event) => submitAdminForm(event, type));
+    form.addEventListener("submit", async (event) => {
+      const button = form.querySelector('button[type="submit"]');
+      button.disabled = true;
+      try {
+        await submitAdminForm(event, type);
+      } catch (error) {
+        console.error("Preparing website content failed.", error);
+        document.querySelector("#admin-feedback").innerHTML = `<div class="unavailable"><strong>Publish failed</strong><p>${esc(error.message)}</p></div>`;
+      } finally {
+        button.disabled = false;
+      }
+    });
   }
 
   function renderAdminList() {
@@ -865,7 +918,7 @@
       document.querySelector("#admin-panel").scrollIntoView({ behavior: "smooth", block: "start" });
     }));
     container.querySelectorAll(".remove-button").forEach((button) => button.addEventListener("click", async () => {
-      if (!window.confirm("Remove this published item? This change will be committed to the website repository.")) return;
+      if (!window.confirm("Remove this item from the live website?")) return;
       const key = button.dataset.key;
       const index = Number(button.dataset.index);
       const id = button.dataset.id;
@@ -878,63 +931,46 @@
     }));
   }
 
-  async function fileToBase64(file) {
+  async function uploadOutlookGraphic(file, itemId) {
     if (!["image/png", "image/jpeg", "image/webp", "image/gif"].includes(file.type)) {
       throw new Error("The outlook graphic must be a PNG, JPEG, WebP or GIF image.");
     }
     if (file.size > 5 * 1024 * 1024) throw new Error("The image must be smaller than 5 MB.");
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onerror = () => reject(new Error("Could not read the selected image."));
-      reader.onload = () => resolve(String(reader.result).split(",")[1]);
-      reader.readAsDataURL(file);
-    });
-  }
-
-  async function saveRepoFile(path, base64, message, sha) {
-    const repoPath = `/repos/${encodeURIComponent(config.githubOwner)}/${encodeURIComponent(config.githubRepository)}/contents/${path.split("/").map(encodeURIComponent).join("/")}`;
-    return githubApi(repoPath, "PUT", {
-      message, content: base64, branch: config.githubBranch || "main", ...(sha ? { sha } : {})
-    });
-  }
-
-  function downloadContentJson() {
-    const blob = new Blob([`${JSON.stringify(content, null, 2)}\n`], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "content.json";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  }
-
-  function encodeBase64(bytes) {
-    let binary = "";
-    for (let start = 0; start < bytes.length; start += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(start, start + 0x8000));
-    }
-    return btoa(binary);
+    const { storage, storageSdk } = await getFirebaseServices();
+    const extension = {
+      "image/png": "png",
+      "image/jpeg": "jpg",
+      "image/webp": "webp",
+      "image/gif": "gif"
+    }[file.type];
+    const imageRef = storageSdk.ref(storage, `outlook-graphics/${itemId}/${crypto.randomUUID()}.${extension}`);
+    const uploaded = await storageSdk.uploadBytes(imageRef, file, { contentType: file.type });
+    return storageSdk.getDownloadURL(uploaded.ref);
   }
 
   async function publishContent(applyChange, message) {
     const feedback = document.querySelector("#admin-feedback");
-    feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Updating local content…</div>`;
+    feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Publishing changes…</div>`;
     try {
-      const normalized = structuredClone(content);
-      for (const key of Object.keys(EMPTY_CONTENT)) if (!Array.isArray(normalized[key])) normalized[key] = [];
-      const merged = applyChange(normalized);
-      content = merged;
-      feedback.innerHTML = `<div class="success-message">Updated locally. Download content.json and replace the repository file to publish.</div>`;
+      const { firestore, firestoreSdk } = await getFirebaseServices();
+      const contentRef = firestoreSdk.doc(firestore, "siteContent", "published");
+      let publishedContent;
+      await firestoreSdk.runTransaction(firestore, async (transaction) => {
+        const snapshot = await transaction.get(contentRef);
+        const latest = normalizeContent(snapshot.exists() ? snapshot.data() : content);
+        publishedContent = applyChange(latest);
+        transaction.set(contentRef, publishedContent);
+      });
+      content = normalizeContent(publishedContent);
+      feedback.innerHTML = `<div class="success-message">${esc(message)} published and now live.</div>`;
       const editor = document.querySelector("#admin-panel form");
       if (editor?.dataset.editKey) renderAdminForm(editor.dataset.kind);
       else editor?.reset();
       renderAdminList();
-      if (page === "home") renderHome();
+      refreshContentView();
     } catch (error) {
-      console.error("Updating local content failed.", error);
-      feedback.innerHTML = `<div class="unavailable"><strong>Update failed</strong><p>${esc(error.message)}</p></div>`;
+      console.error("Publishing website content failed.", error);
+      feedback.innerHTML = `<div class="unavailable"><strong>Publish failed</strong><p>${esc(error.message)}</p></div>`;
     }
   }
 
@@ -973,7 +1009,7 @@
         const feedback = document.querySelector("#admin-feedback");
         feedback.innerHTML = `<div class="loading-state"><span class="loader"></span>Uploading outlook image…</div>`;
         try {
-          item.graphic = `data:${image.type};base64,${await fileToBase64(image)}`;
+          item.graphic = await uploadOutlookGraphic(image, item.id);
         } catch (error) {
           console.error("Outlook image upload failed.", error);
           feedback.innerHTML = `<div class="unavailable"><strong>Image upload failed</strong><p>${esc(error.message)}. The outlook was not published.</p></div>`;
@@ -1030,6 +1066,7 @@
     };
     (pages[page] || renderHome)();
     document.title = `${page === "home" ? "Manitoba Weather" : page === "bot" ? "Noah Storm Scan" : page === "admin" ? "Publisher Desk" : NAV_ITEMS.find(([id]) => id === page)?.[1] || "Weather"} | Noah's Weather Service`;
+    pageHasRendered = true;
   }
 
   getContent().finally(renderPage);
