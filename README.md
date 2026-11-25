@@ -13,7 +13,7 @@ The radar image is served by MSC GeoMet. Attribution and official-source links a
 The administrator dashboard is available at `?page=admin` and uses Firebase Authentication (email/password) and Cloud Firestore. The live status is shown on the Noah Storm Scan page and updates in connected browsers as soon as it is published.
 
 1. In Firebase project `bot-website-6c156`, enable **Authentication → Email/Password** and create the administrator account `noahkonrad4@gmail.com`.
-2. Create a Cloud Firestore database and enable the Firebase Storage bucket.
+2. Enable the [Cloud Firestore API](https://console.developers.google.com/apis/api/firestore.googleapis.com/overview?project=bot-website-6c156), then create a Cloud Firestore database in Firebase. API activation can take a few minutes. Enable the Firebase Storage bucket for outlook images.
 3. Apply [`firestore.rules`](./firestore.rules) in Firestore **Rules** and [`storage.rules`](./storage.rules) in Storage **Rules**. These allow public reads but restrict writes to the administrator email. If you change administrators, update both rules files and `adminEmails` in [`site-config.js`](./site-config.js).
 4. The Firebase web app settings are in [`site-config.js`](./site-config.js). Firebase web config values are public; Firebase rules, not hidden client settings, protect publishing.
 5. Open `?page=admin`, sign in, choose **Online**, **Maintenance**, or **Restarting**, optionally add a visitor-facing note, and select **Publish status**.

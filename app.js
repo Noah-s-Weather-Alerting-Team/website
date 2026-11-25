@@ -86,7 +86,7 @@
     let timeoutId;
     const timeout = new Promise((_, reject) => {
       timeoutId = setTimeout(() => {
-        const error = new Error(`${label} was not confirmed after 15 seconds. Check your connection, Firebase database, and security rules. The write may still finish; verify the public site before retrying.`);
+        const error = new Error(`${label} was not confirmed after 15 seconds. Check your connection, enable the Cloud Firestore API, create the Firestore database, and apply its security rules. The write may still finish; verify the public site before retrying.`);
         error.code = "firebase/publish-timeout";
         reject(error);
       }, 15000);
