@@ -82,6 +82,17 @@
     if (!response.ok) throw new Error(`Request failed (${response.status})`);
     return response.json();
   };
+  function withFirebaseTimeout(operation, label) {
+    let timeoutId;
+    const timeout = new Promise((_, reject) => {
+      timeoutId = setTimeout(() => {
+        const error = new Error(`${label} was not confirmed after 15 seconds. Check your connection, Firebase database, and security rules. The write may still finish; verify the public site before retrying.`);
+        error.code = "firebase/publish-timeout";
+        reject(error);
+      }, 15000);
+    });
+    return Promise.race([operation, timeout]).finally(() => clearTimeout(timeoutId));
+  }
   async function getFirebaseServices() {
     if (!config.firebase?.apiKey || !config.firebase?.projectId) {
       throw new Error("Firebase is not configured. Add the Firebase web app settings to site-config.js.");
@@ -807,11 +818,11 @@
         feedback.textContent = "Publishing status…";
         try {
           const data = new FormData(form);
-          await firestoreSdk.setDoc(statusRef, {
+          await withFirebaseTimeout(firestoreSdk.setDoc(statusRef, {
             status: data.get("status"),
             message: String(data.get("message") || "").trim(),
             updatedAt: firestoreSdk.serverTimestamp()
-          });
+          }), "Bot status publish");
           form.dataset.dirty = "";
           feedback.innerHTML = `<div class="success-message">Bot status published successfully.</div>`;
         } catch (error) {
@@ -948,7 +959,10 @@
       "image/gif": "gif"
     }[file.type];
     const imageRef = storageSdk.ref(storage, `outlook-graphics/${itemId}/${crypto.randomUUID()}.${extension}`);
-    const uploaded = await storageSdk.uploadBytes(imageRef, file, { contentType: file.type });
+    const uploaded = await withFirebaseTimeout(
+      storageSdk.uploadBytes(imageRef, file, { contentType: file.type }),
+      "Outlook image upload"
+    );
     return storageSdk.getDownloadURL(uploaded.ref);
   }
 
@@ -959,12 +973,13 @@
       const { firestore, firestoreSdk } = await getFirebaseServices();
       const contentRef = firestoreSdk.doc(firestore, "siteContent", "published");
       let publishedContent;
-      await firestoreSdk.runTransaction(firestore, async (transaction) => {
+      const publishOperation = firestoreSdk.runTransaction(firestore, async (transaction) => {
         const snapshot = await transaction.get(contentRef);
         const latest = normalizeContent(snapshot.exists() ? snapshot.data() : content);
         publishedContent = applyChange(latest);
         transaction.set(contentRef, publishedContent);
       });
+      await withFirebaseTimeout(publishOperation, "Website content publish");
       content = normalizeContent(publishedContent);
       feedback.innerHTML = `<div class="success-message">${esc(message)} published and now live.</div>`;
       const editor = document.querySelector("#admin-panel form");
