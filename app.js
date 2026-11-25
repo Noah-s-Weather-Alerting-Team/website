@@ -171,9 +171,11 @@
     try {
       const loaded = await fetchJson("./data/content.json", { cache: "no-store" });
       content = normalizeContent(loaded);
+      refreshContentView();
     } catch (error) {
       console.error("Could not load published site content.", error);
       contentLoadError = true;
+      refreshContentView();
     }
     try {
       const { firestore, firestoreSdk } = await getFirebaseServices();
@@ -182,6 +184,7 @@
       if (snapshot.exists()) {
         content = normalizeContent(snapshot.data());
         contentLoadError = false;
+        refreshContentView();
       }
       firestoreSdk.onSnapshot(contentRef, (updatedSnapshot) => {
         if (!updatedSnapshot.exists()) return;
@@ -196,6 +199,7 @@
     } catch (error) {
       console.error("Could not load live website content from Firebase.", error);
       contentLoadError = true;
+      refreshContentView();
     }
   };
   let contentLoadError = false;
@@ -1069,5 +1073,6 @@
     pageHasRendered = true;
   }
 
-  getContent().finally(renderPage);
+  renderPage();
+  getContent();
 })();
