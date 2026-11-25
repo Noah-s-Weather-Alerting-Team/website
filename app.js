@@ -761,10 +761,10 @@
         feedback.textContent = "Publishing status…";
         try {
           const data = new FormData(form);
-          await statusSdk.setDoc(statusRef, {
+          await firestoreSdk.setDoc(statusRef, {
             status: data.get("status"),
             message: String(data.get("message") || "").trim(),
-            updatedAt: statusSdk.serverTimestamp()
+            updatedAt: firestoreSdk.serverTimestamp()
           });
           form.dataset.dirty = "";
           feedback.innerHTML = `<div class="success-message">Bot status published successfully.</div>`;
