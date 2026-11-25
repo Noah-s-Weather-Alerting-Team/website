@@ -1,0 +1,17 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /botStatus/current {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.token.email == 'noahkonrad4@gmail.com'
+        && request.resource.data.keys().hasOnly(['status', 'message', 'updatedAt'])
+        && request.resource.data.keys().hasAll(['status', 'message', 'updatedAt'])
+        && request.resource.data.status in ['online', 'maintenance', 'restarting']
+        && request.resource.data.message is string
+        && request.resource.data.message.size() <= 500
+        && request.resource.data.updatedAt is timestamp;
+    }
+  }
+}

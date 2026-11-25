@@ -27,6 +27,7 @@
   let content = structuredClone(EMPTY_CONTENT);
   let adminToken = "";
   let adminLogin = "";
+  let firebaseServicesPromise;
 
   const esc = (value = "") => String(value).replace(/[&<>"']/g, (char) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -80,6 +81,67 @@
     if (!response.ok) throw new Error(`Request failed (${response.status})`);
     return response.json();
   };
+  async function getFirebaseServices() {
+    if (!config.firebase?.apiKey || !config.firebase?.projectId) {
+      throw new Error("Firebase is not configured. Add the Firebase web app settings to site-config.js.");
+    }
+    if (!firebaseServicesPromise) {
+      firebaseServicesPromise = Promise.all([
+        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-app.js"),
+        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-auth.js"),
+        import("https://www.gstatic.com/firebasejs/13.4.0/firebase-firestore.js")
+      ]).then(([appSdk, authSdk, firestoreSdk]) => {
+        const app = appSdk.initializeApp(config.firebase);
+        return {
+          auth: authSdk.getAuth(app),
+          firestore: firestoreSdk.getFirestore(app),
+          authSdk,
+          firestoreSdk
+        };
+      }).catch((error) => {
+        firebaseServicesPromise = undefined;
+        throw error;
+      });
+    }
+    return firebaseServicesPromise;
+  }
+  const botStatusLabel = (status) => ({
+    online: "Online",
+    maintenance: "Under maintenance",
+    restarting: "Restarting"
+  })[status] || "Status not published";
+  function watchBotStatus(statusElement, messageElement, timestampElement) {
+    getFirebaseServices().then(({ firestore, firestoreSdk }) => {
+      firestoreSdk.onSnapshot(firestoreSdk.doc(firestore, "botStatus", "current"), (snapshot) => {
+        if (!snapshot.exists()) {
+          statusElement.textContent = "Status not published";
+          statusElement.dataset.status = "unknown";
+          messageElement.textContent = "The bot's current status has not been published.";
+          timestampElement.textContent = "";
+          return;
+        }
+        const status = snapshot.data();
+        statusElement.textContent = botStatusLabel(status.status);
+        statusElement.dataset.status = ["online", "maintenance", "restarting"].includes(status.status) ? status.status : "unknown";
+        messageElement.textContent = status.message || "";
+        timestampElement.textContent = status.updatedAt?.toDate
+          ? `Last updated ${localTime(status.updatedAt.toDate().toISOString())}`
+          : "Status update received";
+      }, (error) => {
+        console.error("Could not listen for the bot status.", error);
+        statusElement.textContent = "Status unavailable";
+        statusElement.dataset.status = "unknown";
+        messageElement.textContent = "The live bot status could not be loaded.";
+        timestampElement.textContent = "";
+      });
+    }).catch((error) => {
+      console.error("Could not initialize Firebase for the bot status.", error);
+      statusElement.textContent = "Status unavailable";
+      statusElement.dataset.status = "unknown";
+      messageElement.textContent = "The live bot status could not be loaded.";
+      timestampElement.textContent = "";
+    });
+  }
   const getContent = async () => {
     try {
       const loaded = await fetchJson("./data/content.json", { cache: "no-store" });
@@ -503,7 +565,13 @@
       <h1>Weather alerts,<br><span>where your community is.</span></h1><p>Noah Storm Scan is a Discord bot that delivers weather alerts into Discord servers, with support for monitored locations and alert notifications.</p>
       <a class="button button-light button-large" href="${BOT_SITE}" target="_blank" rel="noopener noreferrer">About &amp; Invite the Bot <span aria-hidden="true">↗</span></a>
       <p class="bot-note">You'll continue to the existing official Noah Storm Scan website.</p></div><div class="bot-orbit" aria-hidden="true"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="bot-orbit-center">N<span>SS</span></div><span class="orbit-pin pin-one">ALERT</span><span class="orbit-pin pin-two">MB</span></div></div></section>
+      <section class="section shell"><article class="bot-live-status"><div><span class="eyebrow">LIVE BOT STATUS</span><h2 id="bot-live-status-label" data-status="unknown">Checking status…</h2><p id="bot-live-status-message">Connecting to live status.</p></div><p class="data-timestamp" id="bot-live-status-updated"></p></article></section>
       <section class="section shell"><div class="bot-feature-grid"><article><span class="feature-number">01</span><h2>Alerts into Discord</h2><p>Bring weather alert notifications into your community's Discord server.</p></article><article><span class="feature-number">02</span><h2>Monitor locations</h2><p>Set monitored locations and receive notifications for relevant weather alerts.</p></article><article><span class="feature-number">03</span><h2>Official bot information</h2><p>Read about features and setup details on the existing official Noah Storm Scan site.</p></article></div></section>`;
+    watchBotStatus(
+      document.querySelector("#bot-live-status-label"),
+      document.querySelector("#bot-live-status-message"),
+      document.querySelector("#bot-live-status-updated")
+    );
   }
 
   function githubApi(path, method = "GET", body) {
@@ -578,19 +646,143 @@
   }
 
   function renderAdmin() {
-    main.innerHTML = `${pageTitle("LOCAL CONTENT TOOL", "Publisher desk", "Create and manage website content without an account. Download the generated JSON file, then replace data/content.json in the repository.")}
-      <section class="section shell admin-shell"><div id="admin-login-status" class="admin-status">
-        <span class="status-pill status-clear"><span class="status-dot"></span>Local publisher</span>
-        <p>Changes are made in this browser only until you download and deploy the updated content JSON.</p>
-        <button class="button button-primary" id="download-content" type="button">Download content.json</button>
-        <p class="data-timestamp">This direct page is not linked from the main navigation. No GitHub credentials or OAuth login are used.</p>
-      </div><div id="admin-workspace"></div></section>`;
-    renderAdminWorkspace();
-    document.querySelector("#download-content").addEventListener("click", downloadContentJson);
+    main.innerHTML = `${pageTitle("ADMINISTRATION", "Admin dashboard", "Sign in to publish the live Noah Storm Scan bot status and manage website content.")}<section class="section shell admin-shell"><div id="admin-login-status" class="admin-status" aria-live="polite"><div class="loading-state"><span class="loader"></span>Connecting to Firebase…</div></div><div id="admin-workspace" hidden></div></section>`;
+    setupAdminAuthentication();
   }
 
-  function renderAdminWorkspace() {
+  async function setupAdminAuthentication() {
+    const loginStatus = document.querySelector("#admin-login-status");
+    try {
+      const { auth, authSdk } = await getFirebaseServices();
+      const allowedEmails = (config.adminEmails || []).map((email) => email.toLowerCase());
+      if (!allowedEmails.length) throw new Error("No admin email is configured in site-config.js.");
+      authSdk.onAuthStateChanged(auth, (user) => {
+        if (user && allowedEmails.includes((user.email || "").toLowerCase())) {
+          renderAuthenticatedAdmin(user, auth, authSdk);
+          return;
+        }
+        document.querySelector("#admin-workspace").hidden = true;
+        if (user) {
+          authSdk.signOut(auth).catch((error) => console.error("Could not sign out an unauthorized user.", error));
+          loginStatus.innerHTML = `<div class="unavailable"><strong>Access denied</strong><p>This Firebase account is not on the administrator allowlist.</p></div>`;
+        } else {
+          renderAdminLogin(loginStatus, auth, authSdk);
+        }
+      }, (error) => {
+        console.error("Firebase authentication state failed.", error);
+        loginStatus.innerHTML = `<div class="unavailable"><strong>Sign-in unavailable</strong><p>${esc(error.message)}</p></div>`;
+      });
+    } catch (error) {
+      console.error("Could not initialize Firebase admin sign-in.", error);
+      loginStatus.innerHTML = `<div class="unavailable"><strong>Sign-in unavailable</strong><p>${esc(error.message)}</p></div>`;
+    }
+  }
+
+  function renderAdminLogin(container, auth, authSdk) {
+    container.innerHTML = `<span class="status-pill status-source"><span class="status-dot"></span>Administrator sign-in</span>
+      <p>Use your administrator email and password to open the dashboard.</p>
+      <form id="admin-login-form" class="admin-form admin-login-form">
+        <label>Email address<input name="email" type="email" autocomplete="username" required></label>
+        <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+        <button class="button button-primary" type="submit">Sign in</button>
+      </form><div id="admin-login-feedback" aria-live="polite"></div>`;
+    container.querySelector("#admin-login-form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = form.querySelector('button[type="submit"]');
+      const feedback = container.querySelector("#admin-login-feedback");
+      button.disabled = true;
+      feedback.textContent = "Signing in…";
+      try {
+        const data = new FormData(form);
+        await authSdk.signInWithEmailAndPassword(auth, data.get("email"), data.get("password"));
+      } catch (error) {
+        console.error("Firebase admin sign-in failed.", error);
+        feedback.innerHTML = `<div class="unavailable"><strong>Sign-in failed</strong><p>${esc(error.message)}</p></div>`;
+        button.disabled = false;
+      }
+    });
+  }
+
+  function renderAuthenticatedAdmin(user, auth, authSdk) {
+    const loginStatus = document.querySelector("#admin-login-status");
+    loginStatus.innerHTML = `<span class="status-pill status-clear"><span class="status-dot"></span>Signed in as ${esc(user.email || "administrator")}</span>
+      <button class="button button-outline admin-signout" id="admin-signout" type="button">Sign out</button>
+      <p>Bot status publishes immediately to the public site. Website content changes below remain local until downloaded and deployed.</p>`;
+    document.querySelector("#admin-signout").addEventListener("click", () => {
+      authSdk.signOut(auth).catch((error) => {
+        console.error("Firebase admin sign-out failed.", error);
+        loginStatus.insertAdjacentHTML("beforeend", `<p class="notice-inline">Sign out failed: ${esc(error.message)}</p>`);
+      });
+    });
     const workspace = document.querySelector("#admin-workspace");
+    workspace.hidden = false;
+    workspace.innerHTML = `<section class="admin-status-editor"><h2>Publish bot status</h2><p>Visitors on the Noah Storm Scan page see status changes as soon as they are published.</p>
+      <div id="admin-bot-status-current" class="inline-note" aria-live="polite">Loading current status…</div>
+      <form id="bot-status-form" class="admin-form">
+        <label>Bot status<select name="status" required><option value="online">Online</option><option value="maintenance">Maintenance</option><option value="restarting">Restarting</option></select></label>
+        <label>Status message (optional)<textarea name="message" rows="3" maxlength="500" placeholder="Add a short note for visitors"></textarea></label>
+        <button class="button button-primary" type="submit">Publish status</button>
+      </form><div id="bot-status-feedback" aria-live="polite"></div></section>
+      <section class="admin-content-editor"><h2>Website content</h2><p>These content edits are still downloaded as JSON and deployed with the website.</p>
+        <button class="button button-outline" id="download-content" type="button">Download content.json</button>
+        <div id="admin-content-workspace"></div></section>`;
+    workspace.querySelector("#download-content").addEventListener("click", downloadContentJson);
+    renderAdminWorkspace(workspace.querySelector("#admin-content-workspace"));
+    setupBotStatusEditor(workspace);
+  }
+
+  async function setupBotStatusEditor(workspace) {
+    const form = workspace.querySelector("#bot-status-form");
+    const currentStatus = workspace.querySelector("#admin-bot-status-current");
+    const feedback = workspace.querySelector("#bot-status-feedback");
+    try {
+      const { firestore, firestoreSdk } = await getFirebaseServices();
+      const statusRef = firestoreSdk.doc(firestore, "botStatus", "current");
+      firestoreSdk.onSnapshot(statusRef, (snapshot) => {
+        const status = snapshot.exists() ? snapshot.data() : null;
+        currentStatus.textContent = status
+          ? `Current status: ${botStatusLabel(status.status)}${status.message ? ` — ${status.message}` : ""}`
+          : "No bot status has been published yet.";
+        if (!form.dataset.dirty && status) {
+          form.elements.namedItem("status").value = status.status;
+          form.elements.namedItem("message").value = status.message || "";
+        }
+      }, (error) => {
+        console.error("Could not listen for the current bot status.", error);
+        currentStatus.textContent = `Could not load current status: ${error.message}`;
+      });
+      form.addEventListener("input", () => { form.dataset.dirty = "true"; });
+      form.addEventListener("change", () => { form.dataset.dirty = "true"; });
+      form.addEventListener("submit", async (event) => {
+        event.preventDefault();
+        const button = form.querySelector('button[type="submit"]');
+        button.disabled = true;
+        feedback.textContent = "Publishing status…";
+        try {
+          const data = new FormData(form);
+          await statusSdk.setDoc(statusRef, {
+            status: data.get("status"),
+            message: String(data.get("message") || "").trim(),
+            updatedAt: statusSdk.serverTimestamp()
+          });
+          form.dataset.dirty = "";
+          feedback.innerHTML = `<div class="success-message">Bot status published successfully.</div>`;
+        } catch (error) {
+          console.error("Publishing bot status failed.", error);
+          feedback.innerHTML = `<div class="unavailable"><strong>Status publish failed</strong><p>${esc(error.message)}</p></div>`;
+        } finally {
+          button.disabled = false;
+        }
+      });
+    } catch (error) {
+      console.error("Could not initialize the bot status editor.", error);
+      currentStatus.textContent = `Status editor unavailable: ${error.message}`;
+      form.querySelector('button[type="submit"]').disabled = true;
+    }
+  }
+
+  function renderAdminWorkspace(workspace = document.querySelector("#admin-workspace")) {
     workspace.hidden = false;
     workspace.innerHTML = `<div id="admin-feedback" aria-live="polite"></div>
       <div class="admin-tabs" role="tablist" aria-label="Content type">
