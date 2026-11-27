@@ -350,6 +350,7 @@ p { color: var(--muted); }
 .bot-live-status { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 23px 26px; border: 1px solid var(--line); border-radius: 5px; background: #0d2034; }
 .bot-live-status h2 { margin: 8px 0; font-size: 22px; }
 .bot-live-status h2[data-status="online"] { color: var(--green); }
+.bot-live-status h2[data-status="offline"] { color: var(--red); }
 .bot-live-status h2[data-status="maintenance"] { color: var(--yellow); }
 .bot-live-status h2[data-status="restarting"] { color: var(--orange); }
 .bot-live-status p { margin-bottom: 0; }

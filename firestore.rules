@@ -8,7 +8,7 @@ service cloud.firestore {
         && request.auth.token.email == 'noahkonrad4@gmail.com'
         && request.resource.data.keys().hasOnly(['status', 'message', 'updatedAt'])
         && request.resource.data.keys().hasAll(['status', 'message', 'updatedAt'])
-        && request.resource.data.status in ['online', 'maintenance', 'restarting']
+        && request.resource.data.status in ['online', 'offline', 'maintenance', 'restarting']
         && request.resource.data.message is string
         && request.resource.data.message.size() <= 500
         && request.resource.data.updatedAt is timestamp;

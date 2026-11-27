@@ -122,6 +122,7 @@
   }
   const botStatusLabel = (status) => ({
     online: "Online",
+    offline: "Offline",
     maintenance: "Under maintenance",
     restarting: "Restarting"
   })[status] || "Status not published";
@@ -137,7 +138,7 @@
         }
         const status = snapshot.data();
         statusElement.textContent = botStatusLabel(status.status);
-        statusElement.dataset.status = ["online", "maintenance", "restarting"].includes(status.status) ? status.status : "unknown";
+        statusElement.dataset.status = ["online", "offline", "maintenance", "restarting"].includes(status.status) ? status.status : "unknown";
         messageElement.textContent = status.message || "";
         timestampElement.textContent = status.updatedAt?.toDate
           ? `Last updated ${localTime(status.updatedAt.toDate().toISOString())}`
@@ -779,7 +780,7 @@
     workspace.innerHTML = `<section class="admin-status-editor"><h2>Publish bot status</h2><p>Visitors on the Noah Storm Scan page see status changes as soon as they are published.</p>
       <div id="admin-bot-status-current" class="inline-note" aria-live="polite">Loading current status…</div>
       <form id="bot-status-form" class="admin-form">
-        <label>Bot status<select name="status" required><option value="online">Online</option><option value="maintenance">Maintenance</option><option value="restarting">Restarting</option></select></label>
+        <label>Bot status<select name="status" required><option value="online">Online</option><option value="offline">Offline</option><option value="maintenance">Maintenance</option><option value="restarting">Restarting</option></select></label>
         <label>Status message (optional)<textarea name="message" rows="3" maxlength="500" placeholder="Add a short note for visitors"></textarea></label>
         <button class="button button-primary" type="submit">Publish status</button>
       </form><div id="bot-status-feedback" aria-live="polite"></div></section>
